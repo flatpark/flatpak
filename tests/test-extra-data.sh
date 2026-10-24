@@ -74,9 +74,116 @@ ${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
 ostree --repo="${FL_DIR}/repo" show --list-detached-metadata-keys "${EXTRA_DATA_COMMIT}" > detached-keys
 assert_file_has_content detached-keys "^xa.extra-data$"
 assert_file_has_content detached-keys "^ostree.gpgsigs$"
-${FLATPAK} ${U} uninstall -y org.test.Hello >&2
-${FLATPAK} ${U} config --unset keep-extra-data
 ok "keep extra data in detached metadata when configured"
+
+${FLATPAK} clean --dry-run > clean-all-dry-run-out
+assert_file_has_content clean-all-dry-run-out "Would free:"
+assert_file_has_content clean-all-dry-run-out "org.test.Hello"
+if test -n "${U}"; then
+    assert_file_has_content clean-all-dry-run-out "User installation:"
+else
+    assert_file_has_content clean-all-dry-run-out "System installation (default):"
+fi
+ok "clean defaults to all installations"
+
+mkdir -p "${USERDIR}/extra-data/cleanup"
+printf partial > "${USERDIR}/extra-data/cleanup/orphan.part"
+printf keep > "${USERDIR}/extra-data/cleanup/keep.txt"
+mkdir -p "${USERDIR}/extra-data/prefetch-cleanup"
+touch "${USERDIR}/extra-data/prefetch-cleanup/.flatpak-prefetch"
+printf prefetched > "${USERDIR}/extra-data/prefetch-cleanup/complete"
+${FLATPAK} ${U} clean --dry-run > clean-dry-run-out
+assert_file_has_content clean-dry-run-out "Would free:"
+assert_file_has_content clean-dry-run-out "prefetch-cleanup"
+ostree --repo="${FL_DIR}/repo" show --list-detached-metadata-keys "${EXTRA_DATA_COMMIT}" > detached-keys
+assert_file_has_content detached-keys "^xa.extra-data$"
+assert_has_file "${USERDIR}/extra-data/cleanup/orphan.part"
+assert_has_file "${USERDIR}/extra-data/prefetch-cleanup/complete"
+
+# Empty directories inside a deployment are mount points; keep them.
+HELLO_DEPLOY="$(${FLATPAK} ${U} info --show-location org.test.Hello)"
+mkdir -p "${HELLO_DEPLOY}/files/lib/GL/empty"
+${FLATPAK} ${U} clean > clean-out
+assert_file_has_content clean-out "Freed:"
+assert_has_dir "${HELLO_DEPLOY}/files/lib/GL/empty"
+ostree --repo="${FL_DIR}/repo" show --list-detached-metadata-keys "${EXTRA_DATA_COMMIT}" > detached-keys
+assert_not_file_has_content detached-keys "^xa.extra-data$"
+assert_file_has_content detached-keys "^ostree.gpgsigs$"
+assert_not_has_file "${USERDIR}/extra-data/cleanup/orphan.part"
+assert_has_file "${USERDIR}/extra-data/cleanup/keep.txt"
+assert_not_has_dir "${USERDIR}/extra-data/prefetch-cleanup"
+${FLATPAK} run --command=sh org.test.Hello -c "cat /app/extra/test" > out
+assert_file_has_content out "extra-data-test-content"
+${FLATPAK} ${U} config --unset keep-extra-data
+${FLATPAK} ${U} repair >&2
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+
+# Leftovers of uninstalled apps, deleted remotes and interrupted installs.
+mkdir -p "${FL_DIR}/repo/refs/remotes/deleted-remote/app/org.test.Gone/x86_64"
+mkdir -p "${FL_DIR}/repo/refs/heads/deploy/app/org.test.Gone"
+GONE_DEPLOY="${FL_DIR}/app/org.test.Gone/x86_64/stable/.$(printf %064d 0)-AbC123"
+mkdir -p "${GONE_DEPLOY}/files"
+printf leftover > "${GONE_DEPLOY}/files/leftover"
+touch "${FL_DIR}/repo/state/$(printf %064d 1).commitpartial"
+mkdir -p "${HOME}/.var/app/org.test.Gone"
+printf data > "${HOME}/.var/app/org.test.Gone/file"
+mkdir -p "${USERDIR}/overrides"
+printf '[Context]\nshared=network;\n' > "${USERDIR}/overrides/org.test.Gone"
+
+${FLATPAK} ${U} clean --dry-run > clean-leftovers-out
+assert_file_has_content clean-leftovers-out "org.test.Gone"
+assert_has_dir "${FL_DIR}/repo/refs/remotes/deleted-remote"
+assert_has_dir "${GONE_DEPLOY}"
+
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
+HELLO_DEPLOY="$(${FLATPAK} ${U} info --show-location org.test.Hello)"
+mkdir -p "${HELLO_DEPLOY}/files/lib/GL"
+${FLATPAK} ${U} clean > clean-leftovers-out
+assert_has_dir "${HELLO_DEPLOY}/files/lib/GL"
+${FLATPAK} run --command=sh org.test.Hello -c "cat /app/extra/test" > out
+assert_file_has_content out "extra-data-test-content"
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+assert_not_has_dir "${FL_DIR}/repo/refs/remotes/deleted-remote"
+assert_not_has_dir "${FL_DIR}/repo/refs/heads/deploy/app/org.test.Gone"
+assert_has_dir "${FL_DIR}/repo/refs/heads"
+assert_not_has_dir "${FL_DIR}/app/org.test.Gone"
+assert_not_has_file "${FL_DIR}/repo/state/$(printf %064d 1).commitpartial"
+# The data of uninstalled apps is only listed by default
+assert_file_has_content clean-leftovers-out "flatpak clean --delete-data"
+assert_has_file "${HOME}/.var/app/org.test.Gone/file"
+assert_has_file "${USERDIR}/overrides/org.test.Gone"
+
+${FLATPAK} ${U} clean --delete-data > clean-leftovers-out
+assert_not_has_dir "${HOME}/.var/app/org.test.Gone"
+assert_not_has_file "${USERDIR}/overrides/org.test.Gone"
+ok "clean leftovers of uninstalled apps"
+: > "${EVENTS_LOG}"
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
+assert_file_has_content "${EVENTS_LOG}" "/${EXTRA_DATA_FILE}"
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+rm -rf "${USERDIR}/extra-data/cleanup"
+ok "clean cached extra data"
+
+LOCK_READY="${TEST_DATA_DIR}/clean-lock-ready"
+python3 - "${FL_DIR}/repo/.lock" "${LOCK_READY}" <<'PY' &
+import fcntl
+import sys
+import time
+
+with open(sys.argv[1], 'w') as lock_file:
+    fcntl.lockf(lock_file, fcntl.LOCK_EX)
+    open(sys.argv[2], 'w').close()
+    time.sleep(3)
+PY
+LOCK_PID=$!
+while ! test -e "${LOCK_READY}"; do sleep 0.05; done
+if ${FLATPAK} ${U} clean > clean-locked-out 2>&1; then
+    assert_not_reached
+fi
+assert_file_has_content clean-locked-out "repository is busy with another transaction"
+wait "${LOCK_PID}"
+rm "${LOCK_READY}"
+ok "reject clean while repository is locked"
 
 # A complete file left by an interrupted prefetch is reused and reclaimed.
 mkdir -p "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"

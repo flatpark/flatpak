@@ -24,6 +24,7 @@ man1 = [
   'flatpak-remote-info',
   'flatpak-install',
   'flatpak-config',
+  'flatpak-clean',
   'flatpak-update',
   'flatpak-uninstall',
   'flatpak-preinstall',

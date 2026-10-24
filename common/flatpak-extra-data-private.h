@@ -10,6 +10,7 @@
 
 gboolean flatpak_repo_remove_extra_data (OstreeRepo   *repo,
                                          const char   *checksum,
+                                         gboolean      dry_run,
                                          gboolean     *out_removed,
                                          guint64      *out_freed_bytes,
                                          GCancellable *cancellable,

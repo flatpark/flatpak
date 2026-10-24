@@ -79,6 +79,7 @@ sources = [
   'flatpak-builtins-build-sign.c',
   'flatpak-builtins-build-update-repo.c',
   'flatpak-builtins-build.c',
+  'flatpak-builtins-clean.c',
   'flatpak-builtins-config.c',
   'flatpak-builtins-create-usb.c',
   'flatpak-builtins-document-export.c',

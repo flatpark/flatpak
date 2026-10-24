@@ -1,0 +1,130 @@
+<?xml version='1.0'?> <!--*-nxml-*-->
+<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
+    "http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd">
+
+<refentry id="flatpak-clean">
+    <refentryinfo>
+        <title>flatpak clean</title>
+        <productname>flatpak</productname>
+    </refentryinfo>
+
+    <refmeta>
+        <refentrytitle>flatpak clean</refentrytitle>
+        <manvolnum>1</manvolnum>
+    </refmeta>
+
+    <refnamediv>
+        <refname>flatpak-clean</refname>
+        <refpurpose>Remove cached extra-data from the local repository</refpurpose>
+    </refnamediv>
+
+    <refsynopsisdiv>
+        <cmdsynopsis>
+            <command>flatpak clean</command>
+            <arg choice="opt" rep="repeat">OPTION</arg>
+        </cmdsynopsis>
+    </refsynopsisdiv>
+
+    <refsect1>
+        <title>Description</title>
+        <para>
+            Removes embedded extra-data from commits in local Flatpak repositories.
+            By default, all configured user and system installations are inspected.
+            Writable installations are cleaned, while system installations that are
+            not writable are reported without modification. Use <option>--user</option>,
+            <option>--system</option>, or <option>--installation</option> to limit the
+            command to selected installations.
+        </para>
+        <para>
+            It also removes incomplete <filename>.part</filename> downloads and
+            interrupted prefetch directories from the per-user extra-data directory.
+            Other files in that directory are reported and left unchanged. The
+            per-user directory is not inspected when only system installations are
+            selected.
+        </para>
+        <para>
+            Leftovers that Flatpak itself does not remove are cleaned as well: empty
+            directories that deleted refs and remotes leave under
+            <filename>repo/refs</filename>, checkouts of deployments that were
+            interrupted, partial-commit markers of commits that no longer exist,
+            and <literal>-origin</literal> remotes of bundles whose apps are no
+            longer installed.
+        </para>
+        <para>
+            The data of apps that are no longer installed in any installation
+            (<filename>~/.var/app/ID</filename> and per-user overrides) is listed,
+            and only deleted with <option>--delete-data</option>, which also resets
+            the app's portal permissions.
+        </para>
+        <para>
+            Writable repositories are locked exclusively while they are inspected and
+            modified. Cleaning an explicitly selected system installation requires
+            direct write access to its repository and does not use the Flatpak system
+            helper.
+        </para>
+    </refsect1>
+
+    <refsect1>
+        <title>Options</title>
+        <variablelist>
+            <varlistentry>
+                <term><option>-h</option></term>
+                <term><option>--help</option></term>
+                <listitem><para>Show help options and exit.</para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>-u</option></term>
+                <term><option>--user</option></term>
+                <listitem><para>
+                    Clean the per-user installation. This also cleans the per-user
+                    extra-data download directory.
+                </para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>--system</option></term>
+                <listitem><para>Clean the default system-wide installation.</para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>--installation=NAME</option></term>
+                <listitem><para>
+                    Clean the system-wide installation specified by
+                    <arg choice="plain">NAME</arg>.
+                </para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>--dry-run</option></term>
+                <listitem><para>Report what would be removed without making changes.</para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>--delete-data</option></term>
+                <listitem><para>
+                    Also delete the data, overrides and portal permissions of apps
+                    that are no longer installed.
+                </para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>-v</option></term>
+                <term><option>--verbose</option></term>
+                <listitem><para>Print debug information during command processing.</para></listitem>
+            </varlistentry>
+            <varlistentry>
+                <term><option>--ostree-verbose</option></term>
+                <listitem><para>Print OSTree debug information during command processing.</para></listitem>
+            </varlistentry>
+        </variablelist>
+    </refsect1>
+
+    <refsect1>
+        <title>Examples</title>
+        <para><command>$ flatpak clean --user --dry-run</command></para>
+        <para><command>$ sudo flatpak clean --system</command></para>
+    </refsect1>
+
+    <refsect1>
+        <title>See also</title>
+        <para>
+            <citerefentry><refentrytitle>flatpak</refentrytitle><manvolnum>1</manvolnum></citerefentry>,
+            <citerefentry><refentrytitle>flatpak-repair</refentrytitle><manvolnum>1</manvolnum></citerefentry>
+        </para>
+    </refsect1>
+</refentry>

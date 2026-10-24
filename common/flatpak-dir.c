@@ -10531,7 +10531,7 @@ flatpak_dir_deploy (FlatpakDir          *self,
       {
         g_autoptr(GError) local_error = NULL;
 
-        if (!flatpak_repo_remove_extra_data (self->repo, checksum, NULL, NULL,
+        if (!flatpak_repo_remove_extra_data (self->repo, checksum, FALSE, NULL, NULL,
                                              cancellable, &local_error))
           g_warning ("Unable to remove extra data from commit %s: %s",
                      checksum, local_error->message);

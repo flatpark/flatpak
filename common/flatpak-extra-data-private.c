@@ -27,6 +27,7 @@ get_commitmeta_size (OstreeRepo *repo,
 gboolean
 flatpak_repo_remove_extra_data (OstreeRepo   *repo,
                                 const char   *checksum,
+                                gboolean      dry_run,
                                 gboolean     *out_removed,
                                 guint64      *out_freed_bytes,
                                 GCancellable *cancellable,
@@ -59,11 +60,13 @@ flatpak_repo_remove_extra_data (OstreeRepo   *repo,
   g_variant_dict_remove (&metadata_dict, "xa.extra-data");
   new_metadata = g_variant_ref_sink (g_variant_dict_end (&metadata_dict));
 
-  if (!ostree_repo_write_commit_detached_metadata (repo, checksum, new_metadata,
+  if (!dry_run &&
+      !ostree_repo_write_commit_detached_metadata (repo, checksum, new_metadata,
                                                    cancellable, error))
     return FALSE;
 
-  new_size = get_commitmeta_size (repo, checksum);
+  new_size = dry_run ? g_variant_get_size (new_metadata) :
+             get_commitmeta_size (repo, checksum);
   if (out_removed != NULL)
     *out_removed = TRUE;
   if (out_freed_bytes != NULL && old_size > new_size)
