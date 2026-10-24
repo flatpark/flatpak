@@ -141,6 +141,18 @@ for number in 1 2 3; do
     make_parallel_extra_data_app "${number}"
 done
 
+if test -n "${FLATPAK_CLI_PROGRESS_CAPTURE:-}"; then
+    : > "${EVENTS_LOG}"
+    progress_command="env -u G_MESSAGES_DEBUG -u FLATPAK_FANCY_OUTPUT ${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3"
+    if test -n "${FLATPAK_CLI_PTY_HELPER:-}"; then
+        python3 "${FLATPAK_CLI_PTY_HELPER}" "${FLATPAK_CLI_PROGRESS_CAPTURE}" "${progress_command}"
+    else
+        script -qec "${progress_command}" "${FLATPAK_CLI_PROGRESS_CAPTURE}"
+    fi
+    ${FLATPAK} ${U} uninstall -y \
+        org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2
+fi
+
 : > "${EVENTS_LOG}"
 ${FLATPAK} ${U} install -y ${REPONAME}-repo \
     org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2

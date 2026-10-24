@@ -32,6 +32,20 @@ FlatpakRemoteState *flatpak_transaction_ensure_remote_state (FlatpakTransaction 
 
 FlatpakDecomposed * flatpak_transaction_operation_get_decomposed (FlatpakTransactionOperation *self);
 
+typedef enum
+{
+  FLATPAK_PREFETCH_STATE_NONE,
+  FLATPAK_PREFETCH_STATE_QUEUED,
+  FLATPAK_PREFETCH_STATE_DOWNLOADING,
+  FLATPAK_PREFETCH_STATE_DONE,
+  FLATPAK_PREFETCH_STATE_FAILED,
+} FlatpakPrefetchState;
+
+FlatpakPrefetchState flatpak_transaction_get_operation_prefetch_state (FlatpakTransaction          *self,
+                                                                       FlatpakTransactionOperation *op,
+                                                                       guint64                     *out_downloaded,
+                                                                       guint64                     *out_total);
+
 #include "flatpak-dir-private.h"
 
 #endif /* __FLATPAK_TRANSACTION_PRIVATE_H__ */

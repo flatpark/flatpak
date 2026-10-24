@@ -24,6 +24,14 @@ gboolean flatpak_extra_data_prefetcher_wait (FlatpakExtraDataPrefetcher *self,
                                              const char                 *sha256,
                                              FlatpakProgress            *progress,
                                              GCancellable               *cancellable);
+void flatpak_extra_data_prefetcher_get_operation_progress (FlatpakExtraDataPrefetcher *self,
+                                                           gpointer                    operation,
+                                                           gboolean                   *out_found,
+                                                           gboolean                   *out_downloading,
+                                                           gboolean                   *out_done,
+                                                           gboolean                   *out_failed,
+                                                           guint64                    *out_downloaded,
+                                                           guint64                    *out_total);
 void flatpak_extra_data_prefetcher_operation_done (FlatpakExtraDataPrefetcher *self,
                                                    gpointer                    operation);
 void flatpak_extra_data_prefetch_cleanup_on_signal (void);

@@ -38,7 +38,9 @@ typedef struct
   guint64                     size;
   guint64                     downloaded;
   guint                       users;
+  gboolean                    downloading;
   gboolean                    done;
+  gboolean                    success;
   gboolean                    created;
   gboolean                    marked;
   GCond                       cond;
@@ -338,6 +340,13 @@ prefetch_worker (gpointer data,
         have_host_slot = acquire_host_slot (job);
     }
 
+  if (have_host_slot)
+    {
+      g_mutex_lock (&self->mutex);
+      job->downloading = TRUE;
+      g_mutex_unlock (&self->mutex);
+    }
+
   for (guint attempt = 0; have_host_slot && !success && attempt < MAX_DOWNLOAD_ATTEMPTS; attempt++)
     {
       g_autoptr(FlatpakHttpSession) session = flatpak_create_http_session (PACKAGE_STRING);
@@ -387,7 +396,9 @@ prefetch_worker (gpointer data,
     release_host_slot (job);
 
   g_mutex_lock (&self->mutex);
+  job->downloading = FALSE;
   job->done = TRUE;
+  job->success = success;
   g_cond_broadcast (&job->cond);
   g_mutex_unlock (&self->mutex);
 }
@@ -557,6 +568,16 @@ flatpak_extra_data_prefetcher_start (FlatpakExtraDataPrefetcher *self)
   if (self->pool == NULL)
     {
       g_info ("Unable to create extra-data prefetch pool: %s", error->message);
+      g_mutex_lock (&self->mutex);
+      for (guint i = 0; i < self->queue->len; i++)
+        {
+          PrefetchJob *job = g_ptr_array_index (self->queue, i);
+
+          job->done = TRUE;
+          job->success = FALSE;
+          g_cond_broadcast (&job->cond);
+        }
+      g_mutex_unlock (&self->mutex);
       return;
     }
 
@@ -590,6 +611,58 @@ flatpak_extra_data_prefetcher_wait (FlatpakExtraDataPrefetcher *self,
     }
   g_mutex_unlock (&self->mutex);
   return TRUE;
+}
+
+void
+flatpak_extra_data_prefetcher_get_operation_progress (FlatpakExtraDataPrefetcher *self,
+                                                       gpointer                    operation,
+                                                       gboolean                   *out_found,
+                                                       gboolean                   *out_downloading,
+                                                       gboolean                   *out_done,
+                                                       gboolean                   *out_failed,
+                                                       guint64                    *out_downloaded,
+                                                       guint64                    *out_total)
+{
+  GPtrArray *jobs;
+  gboolean downloading = FALSE;
+  gboolean done = TRUE;
+  gboolean failed = FALSE;
+  guint64 downloaded = 0;
+  guint64 total = 0;
+
+  *out_found = FALSE;
+  *out_downloading = FALSE;
+  *out_done = FALSE;
+  *out_failed = FALSE;
+  *out_downloaded = 0;
+  *out_total = 0;
+
+  g_mutex_lock (&self->mutex);
+  jobs = g_hash_table_lookup (self->operations, operation);
+  if (jobs == NULL || jobs->len == 0)
+    {
+      g_mutex_unlock (&self->mutex);
+      return;
+    }
+
+  for (guint i = 0; i < jobs->len; i++)
+    {
+      PrefetchJob *job = g_ptr_array_index (jobs, i);
+
+      total += job->size;
+      downloaded += job->done && job->success ? job->size : MIN (job->downloaded, job->size);
+      downloading |= job->downloading;
+      done &= job->done;
+      failed |= job->done && !job->success;
+    }
+  g_mutex_unlock (&self->mutex);
+
+  *out_found = TRUE;
+  *out_downloading = downloading;
+  *out_done = done;
+  *out_failed = failed;
+  *out_downloaded = downloaded;
+  *out_total = total;
 }
 
 void

@@ -188,6 +188,7 @@ typedef struct _FlatpakTransactionPrivate
   RequestData                 *active_request;
 
   FlatpakTransactionOperation *current_op;
+  FlatpakExtraDataPrefetcher  *extra_data_prefetcher;
 
   char                        *parent_window;
   gboolean                     no_pull;
@@ -4531,6 +4532,47 @@ flatpak_transaction_get_current_operation (FlatpakTransaction *self)
   return NULL;
 }
 
+FlatpakPrefetchState
+flatpak_transaction_get_operation_prefetch_state (FlatpakTransaction          *self,
+                                                   FlatpakTransactionOperation *op,
+                                                   guint64                     *out_downloaded,
+                                                   guint64                     *out_total)
+{
+  FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
+  gboolean found;
+  gboolean downloading;
+  gboolean done;
+  gboolean failed;
+  guint64 downloaded;
+  guint64 total;
+
+  if (out_downloaded != NULL)
+    *out_downloaded = 0;
+  if (out_total != NULL)
+    *out_total = 0;
+  if (priv->extra_data_prefetcher == NULL)
+    return FLATPAK_PREFETCH_STATE_NONE;
+
+  flatpak_extra_data_prefetcher_get_operation_progress (priv->extra_data_prefetcher, op,
+                                                        &found, &downloading, &done, &failed,
+                                                        &downloaded, &total);
+  if (!found)
+    return FLATPAK_PREFETCH_STATE_NONE;
+
+  if (out_downloaded != NULL)
+    *out_downloaded = downloaded;
+  if (out_total != NULL)
+    *out_total = total;
+
+  if (failed)
+    return FLATPAK_PREFETCH_STATE_FAILED;
+  if (done)
+    return FLATPAK_PREFETCH_STATE_DONE;
+  if (downloading)
+    return FLATPAK_PREFETCH_STATE_DOWNLOADING;
+  return FLATPAK_PREFETCH_STATE_QUEUED;
+}
+
 /**
  * flatpak_transaction_get_operation_for_ref:
  * @self: a #FlatpakTransaction
@@ -5635,6 +5677,7 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
     return flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted by user"));
 
   prefetcher = flatpak_extra_data_prefetcher_new (priv->dir);
+  priv->extra_data_prefetcher = prefetcher;
   prepare_extra_data_prefetch (self, prefetcher, cancellable);
   flatpak_dir_set_extra_data_prefetcher (priv->dir, prefetcher);
 
@@ -5726,6 +5769,7 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
   priv->current_op = NULL;
 
   flatpak_dir_set_extra_data_prefetcher (priv->dir, NULL);
+  priv->extra_data_prefetcher = NULL;
   g_clear_pointer (&prefetcher, flatpak_extra_data_prefetcher_unref);
 
   if (needs_triggers)

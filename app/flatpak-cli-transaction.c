@@ -248,9 +248,8 @@ set_op_progress (FlatpakCliTransaction       *self,
     }
 }
 
-static void
-spin_op_progress (FlatpakCliTransaction       *self,
-                  FlatpakTransactionOperation *op)
+static const char *
+spinner_frame (int n)
 {
   const char *p[] = {
     "|",
@@ -259,7 +258,34 @@ spin_op_progress (FlatpakCliTransaction       *self,
     "\\",
   };
 
-  set_op_progress (self, op, p[self->op_progress++ % G_N_ELEMENTS (p)]);
+  return p[n % G_N_ELEMENTS (p)];
+}
+
+static void
+spin_op_progress (FlatpakCliTransaction       *self,
+                  FlatpakTransactionOperation *op)
+{
+  set_op_progress (self, op, spinner_frame (self->op_progress++));
+}
+
+static void
+set_op_download (FlatpakCliTransaction       *self,
+                 FlatpakTransactionOperation *op,
+                 guint64                      transferred,
+                 guint64                      max)
+{
+  g_autofree char *formatted_max = NULL;
+  g_autofree char *formatted = NULL;
+  g_autofree char *text = NULL;
+  int row;
+
+  // avoid "bytes"
+  formatted = transferred < 1000 ? g_format_size (1000) : g_format_size (transferred);
+  formatted_max = max < 1000 ? g_format_size (1000) : g_format_size (max);
+
+  text = g_strdup_printf ("%s / %s", formatted, formatted_max);
+  row = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (op), "row"));
+  flatpak_table_printer_set_decimal_cell (self->printer, row, self->download_col, text);
 }
 
 static char *
@@ -276,6 +302,45 @@ format_duration (guint64 duration)
     return g_strdup_printf ("%02d:%02d:%02d", h, m, s);
   else
     return g_strdup_printf ("%02d:%02d", m, s);
+}
+
+/* Operations whose extra-data is being prefetched in the background get
+ * the same spinner as the current one, and their real byte counts. */
+static void
+update_background_prefetch (FlatpakCliTransaction *self,
+                            FlatpakTransaction    *transaction)
+{
+  g_autolist(FlatpakTransactionOperation) ops = flatpak_transaction_get_operations (transaction);
+  GList *l;
+
+  for (l = ops; l != NULL; l = l->next)
+    {
+      FlatpakTransactionOperation *op = l->data;
+      FlatpakPrefetchState state;
+      guint64 downloaded;
+      guint64 total;
+
+      if (g_object_get_data (G_OBJECT (op), "flatpak-cli-started") != NULL ||
+          g_object_get_data (G_OBJECT (op), "flatpak-cli-finished") != NULL)
+        continue;
+
+      state = flatpak_transaction_get_operation_prefetch_state (transaction, op,
+                                                                &downloaded, &total);
+      if (state == FLATPAK_PREFETCH_STATE_DOWNLOADING)
+        {
+          set_op_progress (self, op, spinner_frame (self->op_progress));
+          if (total > 0)
+            set_op_download (self, op, downloaded, total);
+        }
+      else if (state == FLATPAK_PREFETCH_STATE_DONE)
+        {
+          set_op_progress (self, op, " ");
+          if (total > 0)
+            set_op_download (self, op, total, total);
+        }
+      else
+        set_op_progress (self, op, " ");
+    }
 }
 
 static void
@@ -324,6 +389,9 @@ progress_changed_cb (FlatpakTransactionProgress *progress,
 
   spin_op_progress (cli, op);
 
+  if (flatpak_fancy_output ())
+    update_background_prefetch (cli, self);
+
   bar_length = MIN (20, cli->table_width - (strlen (cli->progress_msg) + 6 + cli->speed_len));
 
   n_full = (bar_length * percent) / 100;
@@ -365,20 +433,7 @@ progress_changed_cb (FlatpakTransactionProgress *progress,
     {
       flatpak_table_printer_set_cell (cli->printer, cli->progress_row, 0, str->str);
       if (flatpak_transaction_operation_get_operation_type (op) != FLATPAK_TRANSACTION_OPERATION_UNINSTALL)
-        {
-          g_autofree char *formatted_max = NULL;
-          g_autofree char *formatted = NULL;
-          g_autofree char *text = NULL;
-          int row;
-
-          // avoid "bytes"
-          formatted = transferred < 1000 ? g_format_size (1000) : g_format_size (transferred);
-          formatted_max = max < 1000 ? g_format_size (1000) : g_format_size (max);
-
-          text = g_strdup_printf ("%s / %s", formatted, formatted_max);
-          row = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (op), "row"));
-          flatpak_table_printer_set_decimal_cell (cli->printer, row, cli->download_col, text);
-        }
+        set_op_download (cli, op, transferred, max);
       if (!redraw (cli))
         g_print ("\r%s", str->str); /* redraw failed, just update the progress */
       flatpak_pty_set_progress (percent);
@@ -405,6 +460,7 @@ new_operation (FlatpakTransaction          *transaction,
 
   self->op++;
   self->op_progress = 0;
+  g_object_set_data (G_OBJECT (op), "flatpak-cli-started", GINT_TO_POINTER (1));
 
   switch (op_type)
     {
@@ -438,6 +494,7 @@ new_operation (FlatpakTransaction          *transaction,
   if (flatpak_fancy_output ())
     {
       set_progress (self, text);
+      update_background_prefetch (self, transaction);
       spin_op_progress (self, op);
       redraw (self);
     }
@@ -460,13 +517,18 @@ operation_done (FlatpakTransaction          *transaction,
   FlatpakCliTransaction *self = FLATPAK_CLI_TRANSACTION (transaction);
   FlatpakTransactionOperationType op_type = flatpak_transaction_operation_get_operation_type (op);
 
+  g_object_set_data (G_OBJECT (op), "flatpak-cli-finished", GINT_TO_POINTER (1));
+
   if (op_type == FLATPAK_TRANSACTION_OPERATION_UNINSTALL)
     set_op_progress (self, op, FLATPAK_ANSI_GREEN "-" FLATPAK_ANSI_COLOR_RESET);
   else
     set_op_progress (self, op, FLATPAK_ANSI_GREEN "✓" FLATPAK_ANSI_COLOR_RESET);
 
   if (flatpak_fancy_output ())
-    redraw (self);
+    {
+      update_background_prefetch (self, transaction);
+      redraw (self);
+    }
 }
 
 static gboolean
@@ -483,6 +545,10 @@ operation_error (FlatpakTransaction            *transaction,
   g_autofree char *text = NULL;
   const char *on = "";
   const char *off = "";
+
+  g_object_set_data (G_OBJECT (op), "flatpak-cli-finished", GINT_TO_POINTER (1));
+  if (flatpak_fancy_output ())
+    update_background_prefetch (self, transaction);
 
   if (flatpak_fancy_output ())
     {
