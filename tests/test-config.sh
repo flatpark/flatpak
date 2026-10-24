@@ -26,6 +26,7 @@ export LC_ALL=C
 
 ${FLATPAK} config --list > list_out
 assert_file_has_content list_out "^languages:"
+assert_file_has_content list_out "^extra-data-parallel: [*]unset[*] [(]default: 4[)]"
 
 ok "config list"
 
@@ -52,5 +53,17 @@ ${FLATPAK} config --get languages > get_out
 assert_file_has_content get_out "^[*]unset[*]"
 
 ok "config unset"
+
+${FLATPAK} config --set extra-data-parallel 0
+${FLATPAK} config --get extra-data-parallel > get_out
+assert_file_has_content get_out "^0$"
+${FLATPAK} config --set extra-data-parallel 1
+if ${FLATPAK} config --set extra-data-parallel invalid >invalid_out 2>&1; then
+    fatal "Invalid extra-data parallelism unexpectedly accepted"
+fi
+assert_file_has_content invalid_out "not a valid non-negative integer"
+${FLATPAK} config --unset extra-data-parallel
+
+ok "config extra-data parallelism"
 
 done_testing

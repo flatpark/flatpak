@@ -193,6 +193,30 @@ parse_boolean (const char  *value,
 }
 
 static char *
+parse_non_negative_integer (const char *value,
+                            GError    **error)
+{
+  char *end = NULL;
+  guint64 parsed;
+
+  errno = 0;
+  parsed = g_ascii_strtoull (value, &end, 10);
+  if (errno != 0 || end == value || *end != '\0' || parsed > G_MAXINT)
+    {
+      flatpak_fail (error, _("'%s' is not a valid non-negative integer"), value);
+      return NULL;
+    }
+
+  return g_strdup (value);
+}
+
+static char *
+print_value (const char *value)
+{
+  return value ? g_strdup (value) : g_strdup ("*unset*");
+}
+
+static char *
 print_locale (const char *value)
 {
   return g_strdup (value);
@@ -234,6 +258,12 @@ get_report_os_info_default (FlatpakDir *dir)
   return g_strdup ("true");
 }
 
+static char *
+get_extra_data_parallel_default (FlatpakDir *dir)
+{
+  return g_strdup ("4");
+}
+
 typedef struct
 {
   const char *name;
@@ -246,6 +276,7 @@ ConfigKey keys[] = {
   { "languages", parse_lang, print_lang, get_lang_default },
   { "extra-languages", parse_locale, print_locale, NULL },
   { "report-os-info", parse_boolean, print_boolean, get_report_os_info_default },
+  { "extra-data-parallel", parse_non_negative_integer, print_value, get_extra_data_parallel_default },
 };
 
 static ConfigKey *

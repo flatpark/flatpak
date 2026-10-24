@@ -5,6 +5,7 @@ from email.utils import parsedate
 from calendar import timegm
 import gzip
 import sys
+import threading
 import time
 import zlib
 import os
@@ -16,6 +17,37 @@ import sys
 
 class RequestHandler(http_server.SimpleHTTPRequestHandler):
     headers_log_file = None
+    events_log_file = None
+    control_lock = threading.Lock()
+
+    def log_event(self, event):
+        if self.events_log_file is not None:
+            with self.control_lock:
+                with open(self.events_log_file, 'a+') as f:
+                    f.write("%.6f %s %s\n" % (time.monotonic(), event, self.path))
+
+    def handle_test_controls(self):
+        path = self.translate_path(self.path)
+        fail_path = path + ".fail"
+        delay_path = path + ".delay"
+
+        if os.path.isfile(fail_path):
+            with self.control_lock:
+                with open(fail_path, 'r') as f:
+                    values = f.read().split()
+                remaining = int(values[0])
+                status = int(values[1]) if len(values) > 1 else 500
+                if remaining != 0:
+                    if remaining > 0:
+                        with open(fail_path, 'w') as f:
+                            f.write("%d %d\n" % (remaining - 1, status))
+                    self.send_error(status)
+                    return True
+
+        if os.path.isfile(delay_path):
+            with open(delay_path, 'r') as f:
+                time.sleep(float(f.read()))
+        return False
 
     def handle_tokens(self):
         need_token_path = self.translate_path(self.path) + ".need_token"
@@ -48,15 +80,20 @@ class RequestHandler(http_server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         self.log_flatpak_headers()
-        if self.handle_tokens():
-            return None
-        self.headers.__delitem__("If-Modified-Since")
-        return super().do_GET()
+        self.log_event("start")
+        try:
+            if self.handle_tokens() or self.handle_test_controls():
+                return None
+            self.headers.__delitem__("If-Modified-Since")
+            return super().do_GET()
+        finally:
+            self.log_event("end")
 
-def run(dir, headers_log=None):
+def run(dir, headers_log=None, events_log=None):
     RequestHandler.protocol_version = "HTTP/1.0"
     RequestHandler.headers_log_file = headers_log
-    httpd = http_server.HTTPServer( ("127.0.0.1", 0), RequestHandler)
+    RequestHandler.events_log_file = events_log
+    httpd = http_server.ThreadingHTTPServer(("127.0.0.1", 0), RequestHandler)
     host, port = httpd.socket.getsockname()[:2]
     with open("httpd-port", 'w') as file:
         file.write("%d" % port)
@@ -74,9 +111,12 @@ def run(dir, headers_log=None):
 if __name__ == '__main__':
     dir = None
     headers_log = None
+    events_log = None
     if len(sys.argv) >= 2 and len(sys.argv[1]) > 0:
         dir = sys.argv[1]
     if len(sys.argv) >= 3 and len(sys.argv[2]) > 0:
         headers_log = sys.argv[2]
+    if len(sys.argv) >= 4 and len(sys.argv[3]) > 0:
+        events_log = sys.argv[3]
 
-    run(dir, headers_log)
+    run(dir, headers_log, events_log)

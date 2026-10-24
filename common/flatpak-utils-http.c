@@ -865,20 +865,21 @@ flatpak_load_uri (FlatpakHttpSession    *http_session,
 }
 
 gboolean
-flatpak_download_http_uri (FlatpakHttpSession    *http_session,
-                           const char            *uri,
-                           FlatpakCertificates   *certificates,
-                           FlatpakHTTPFlags       flags,
-                           GOutputStream         *out,
-                           const char            *token,
-                           FlatpakLoadUriProgress progress,
-                           gpointer               user_data,
-                           GCancellable          *cancellable,
-                           GError               **error)
+flatpak_download_http_uri_with_retries (FlatpakHttpSession    *http_session,
+                                         const char            *uri,
+                                         FlatpakCertificates   *certificates,
+                                         FlatpakHTTPFlags       flags,
+                                         GOutputStream         *out,
+                                         const char            *token,
+                                         FlatpakLoadUriProgress progress,
+                                         gpointer               user_data,
+                                         guint                  max_retries,
+                                         GCancellable          *cancellable,
+                                         GError               **error)
 {
   g_auto(LoadUriData) data = { NULL };
   g_autoptr(GError) local_error = NULL;
-  guint n_retries_remaining = DEFAULT_N_NETWORK_RETRIES;
+  guint n_retries_remaining = max_retries;
   g_autoptr(GMainContextPopDefault) main_context = NULL;
   gboolean success = FALSE;
 
@@ -897,7 +898,7 @@ flatpak_download_http_uri (FlatpakHttpSession    *http_session,
 
   do
     {
-      if (n_retries_remaining < DEFAULT_N_NETWORK_RETRIES)
+      if (n_retries_remaining < max_retries)
         {
           g_clear_error (&local_error);
           reset_load_uri_data (&data);
@@ -915,7 +916,8 @@ flatpak_download_http_uri (FlatpakHttpSession    *http_session,
       if (data.downloaded_bytes > 0)
         break;
     }
-  while (flatpak_http_should_retry_request (local_error, n_retries_remaining--));
+  while (n_retries_remaining > 0 &&
+         flatpak_http_should_retry_request (local_error, n_retries_remaining--));
 
   if (success)
     return TRUE;
@@ -923,6 +925,24 @@ flatpak_download_http_uri (FlatpakHttpSession    *http_session,
   g_assert (local_error != NULL);
   g_propagate_error (error, g_steal_pointer (&local_error));
   return FALSE;
+}
+
+gboolean
+flatpak_download_http_uri (FlatpakHttpSession    *http_session,
+                           const char            *uri,
+                           FlatpakCertificates   *certificates,
+                           FlatpakHTTPFlags       flags,
+                           GOutputStream         *out,
+                           const char            *token,
+                           FlatpakLoadUriProgress progress,
+                           gpointer               user_data,
+                           GCancellable          *cancellable,
+                           GError               **error)
+{
+  return flatpak_download_http_uri_with_retries (http_session, uri, certificates,
+                                                  flags, out, token, progress,
+                                                  user_data, DEFAULT_N_NETWORK_RETRIES,
+                                                  cancellable, error);
 }
 
 /************************************************************************

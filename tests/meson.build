@@ -442,7 +442,7 @@ foreach testcase : wrapped_tests
     'test-summaries.sh' : 60,
     'test-unused.sh' : 90,
     'test-update-portal.sh' : 90,
-    'test-extra-data.sh' : 90,
+    'test-extra-data.sh' : 180,
   }.get(script, 30)
 
   is_parallel = {

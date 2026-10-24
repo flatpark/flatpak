@@ -187,6 +187,7 @@ sources = [
   'flatpak-dir-utils.c',
   'flatpak-docker-reference.c',
   'flatpak-error.c',
+  'flatpak-extra-data-prefetch.c',
   'flatpak-exports.c',
   'flatpak-glib-backports.c',
   'flatpak-image-collection.c',

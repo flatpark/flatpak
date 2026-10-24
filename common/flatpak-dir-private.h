@@ -25,6 +25,7 @@
 
 #include "flatpak-common-types-private.h"
 #include "flatpak-context-private.h"
+#include "flatpak-extra-data-prefetch-private.h"
 #include "flatpak-progress-private.h"
 #include "flatpak-variant-private.h"
 #include "flatpak-ref-utils-private.h"
@@ -577,6 +578,8 @@ gboolean              flatpak_dir_ensure_repo                               (Fla
 gboolean              flatpak_dir_maybe_ensure_repo                         (FlatpakDir                    *self,
                                                                              GCancellable                  *cancellable,
                                                                              GError                       **error);
+void                  flatpak_dir_set_extra_data_prefetcher                 (FlatpakDir                    *self,
+                                                                             FlatpakExtraDataPrefetcher    *prefetcher);
 char *                flatpak_dir_get_config                                (FlatpakDir                    *self,
                                                                              const char                    *key,
                                                                              GError                       **error);

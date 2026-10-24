@@ -36,7 +36,9 @@ mkdir -p "${EXTRA_DATA_DIR}"
 echo "extra-data-test-content" > "${EXTRA_DATA_DIR}/${EXTRA_DATA_FILE}"
 
 # serve the extra data
-httpd web-server.py "${EXTRA_DATA_DIR}"
+EVENTS_LOG="${TEST_DATA_DIR}/extra-data-events"
+touch "${EVENTS_LOG}"
+httpd web-server.py "${EXTRA_DATA_DIR}" "" "${EVENTS_LOG}"
 EXTRA_DATA_URL="http://127.0.0.1:$(cat httpd-port)/${EXTRA_DATA_FILE}"
 
 # download to get the size and sha256 sum
@@ -46,7 +48,8 @@ EXTRA_DATA_SIZE=$(stat --printf="%s" "${DOWNLOADED_EXTRA_DATA}")
 EXTRA_DATA_SHA256=$(sha256sum "${DOWNLOADED_EXTRA_DATA}" | cut -f1 -d' ')
 
 # build the app with the extra data
-EXTRA_DATA="--extra-data=test:${EXTRA_DATA_SHA256}:${EXTRA_DATA_SIZE}:${EXTRA_DATA_SIZE}:${EXTRA_DATA_URL}"
+EXTRA_DATA_NAME="test"
+EXTRA_DATA="--extra-data=${EXTRA_DATA_NAME}:${EXTRA_DATA_SHA256}:${EXTRA_DATA_SIZE}:${EXTRA_DATA_SIZE}:${EXTRA_DATA_URL}"
 BUILD_FINISH_ARGS=${EXTRA_DATA} make_updated_app ${REPONAME} ${COLLECTION_ID} ${BRANCH} UPDATE1
 
 # ensure it installs correctly
@@ -55,10 +58,148 @@ install_repo ${REPONAME} ${BRANCH}
 # ensure the right extra-data got downloaded
 ${FLATPAK} run --command=sh org.test.Hello -c "cat /app/extra/test" > out
 assert_file_has_content out "extra-data-test-content"
+assert_not_has_file "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}"
 
 ${FLATPAK} ${U} uninstall -y org.test.Hello >&2
 
 ok "install extra data app with ostree"
+
+# A complete file left by an interrupted prefetch is reused and reclaimed.
+mkdir -p "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"
+touch "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/.flatpak-prefetch"
+cp "${DOWNLOADED_EXTRA_DATA}" "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}"
+printf partial > "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}.part"
+: > "${EVENTS_LOG}"
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
+assert_not_file_has_content "${EVENTS_LOG}" "/${EXTRA_DATA_FILE}"
+assert_not_has_dir "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+ok "reuse and reclaim interrupted extra data prefetch"
+
+# An invalid complete file left by an interrupted prefetch is downloaded again.
+mkdir -p "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"
+touch "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/.flatpak-prefetch"
+printf invalid > "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}"
+: > "${EVENTS_LOG}"
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
+assert_file_has_content "${EVENTS_LOG}" "/${EXTRA_DATA_FILE}"
+assert_not_has_dir "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+ok "replace invalid interrupted extra data prefetch"
+
+# A file supplied by the user must never be removed by the prefetcher.
+mkdir -p "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"
+cp "${DOWNLOADED_EXTRA_DATA}" "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}"
+: > "${EVENTS_LOG}"
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
+assert_not_file_has_content "${EVENTS_LOG}" "/${EXTRA_DATA_FILE}"
+assert_has_file "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}"
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+rm -rf "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"
+ok "preserve user-provided extra data"
+
+make_parallel_extra_data_app () {
+    local number="$1"
+    local app_id="org.test.ExtraData${number}"
+    local file="parallel-${number}"
+    local size sha url extra
+
+    printf 'parallel extra data %s\n' "${number}" > "${EXTRA_DATA_DIR}/${file}"
+    echo 0.4 > "${EXTRA_DATA_DIR}/${file}.delay"
+    size=$(stat --printf="%s" "${EXTRA_DATA_DIR}/${file}")
+    sha=$(sha256sum "${EXTRA_DATA_DIR}/${file}" | cut -f1 -d' ')
+    url="http://127.0.0.1:$(cat httpd-port)/${file}"
+    extra="--extra-data=test:${sha}:${size}:${size}:${url}"
+    BUILD_FINISH_ARGS=${extra} make_updated_app ${REPONAME} ${COLLECTION_ID} ${BRANCH} UPDATE "${app_id}"
+}
+
+assert_parallel_requests () {
+    local expected="$1"
+    python3 - "${EVENTS_LOG}" "${expected}" <<'PY'
+import sys
+
+log, expected = sys.argv[1:]
+active = 0
+overlap = False
+with open(log) as source:
+    for line in source:
+        _, event, path = line.split()
+        if not path.startswith('/parallel-'):
+            continue
+        if event == 'start':
+            if active:
+                overlap = True
+            active += 1
+        else:
+            active -= 1
+if overlap != (expected == 'yes'):
+    raise SystemExit('request overlap was %s, expected %s' % (overlap, expected))
+PY
+}
+
+for number in 1 2 3; do
+    make_parallel_extra_data_app "${number}"
+done
+
+: > "${EVENTS_LOG}"
+${FLATPAK} ${U} install -y ${REPONAME}-repo \
+    org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2
+assert_parallel_requests yes
+${FLATPAK} ${U} uninstall -y \
+    org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2
+ok "prefetch extra data in parallel"
+
+: > "${EVENTS_LOG}"
+FLATPAK_EXTRA_DATA_PARALLEL=1 ${FLATPAK} ${U} install -y ${REPONAME}-repo \
+    org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2
+assert_parallel_requests no
+${FLATPAK} ${U} uninstall -y \
+    org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2
+ok "disable parallel extra data prefetch"
+
+# Transient prefetch failures are retried and do not fail the operation.
+echo "2 500" > "${EXTRA_DATA_DIR}/parallel-1.fail"
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.ExtraData1 >&2
+${FLATPAK} ${U} uninstall -y org.test.ExtraData1 >&2
+rm "${EXTRA_DATA_DIR}/parallel-1.fail"
+ok "retry failed extra data prefetch"
+
+# Interrupting a transaction drops what the prefetcher downloaded. The
+# prefetcher runs in the client either way; a system install would leave
+# the system helper's revokefs mount behind until it notices.
+if [ x${USE_SYSTEMDIR-} != xyes ] ; then
+    for number in 1 2 3; do
+        echo 30 > "${EXTRA_DATA_DIR}/parallel-${number}.delay"
+    done
+    rm -rf "${USERDIR}/extra-data"
+    ${FLATPAK} ${U} install -y ${REPONAME}-repo \
+        org.test.ExtraData1 org.test.ExtraData2 org.test.ExtraData3 >&2 &
+    install_pid=$!
+    for _ in $(seq 100); do
+        test "$(find "${USERDIR}/extra-data" -name .flatpak-prefetch 2>/dev/null | wc -l)" -ge 2 && break
+        sleep 0.1
+    done
+    kill -INT "${install_pid}"
+    wait "${install_pid}" || true
+    assert_not_has_dir "${USERDIR}/extra-data"
+    for number in 1 2 3; do
+        echo 0.4 > "${EXTRA_DATA_DIR}/parallel-${number}.delay"
+    done
+fi
+ok "drop prefetched extra data on interrupt"
+
+# A permanent error still comes from the original pull path.
+MISSING_CONTENT="missing extra data"
+MISSING_SIZE=${#MISSING_CONTENT}
+MISSING_SHA=$(printf %s "${MISSING_CONTENT}" | sha256sum | cut -f1 -d' ')
+MISSING_URL="http://127.0.0.1:$(cat httpd-port)/permanently-missing"
+BUILD_FINISH_ARGS="--extra-data=test:${MISSING_SHA}:${MISSING_SIZE}:${MISSING_SIZE}:${MISSING_URL}" \
+    make_updated_app ${REPONAME} ${COLLECTION_ID} ${BRANCH} UPDATE org.test.ExtraDataMissing
+if ${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.ExtraDataMissing >missing-out 2>&1; then
+    fatal "Installing permanently missing extra data unexpectedly succeeded"
+fi
+assert_file_has_content missing-out "While downloading.*permanently-missing"
+ok "report permanent extra data failure"
 
 # Start the fake registry server
 

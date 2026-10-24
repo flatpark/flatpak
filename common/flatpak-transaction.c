@@ -26,6 +26,7 @@
 #include "flatpak-auth-private.h"
 #include "flatpak-dir-private.h"
 #include "flatpak-error.h"
+#include "flatpak-extra-data-prefetch-private.h"
 #include "flatpak-image-collection-private.h"
 #include "flatpak-image-source-private.h"
 #include "flatpak-installation-private.h"
@@ -5436,6 +5437,59 @@ add_uninstall_unused_ops (FlatpakTransaction  *self,
   return TRUE;
 }
 
+static void
+prepare_extra_data_prefetch (FlatpakTransaction          *self,
+                             FlatpakExtraDataPrefetcher *prefetcher,
+                             GCancellable                *cancellable)
+{
+  FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
+
+  if (priv->no_pull || !flatpak_extra_data_prefetcher_is_enabled (prefetcher))
+    return;
+
+  for (GList *l = priv->ops; l != NULL; l = l->next)
+    {
+      FlatpakTransactionOperation *op = l->data;
+      g_autoptr(FlatpakRemoteState) state = NULL;
+      g_autoptr(GVariant) commit = NULL;
+      g_autoptr(GVariant) sources = NULL;
+      g_autoptr(GError) local_error = NULL;
+
+      if (op->skip ||
+          (op->kind != FLATPAK_TRANSACTION_OPERATION_INSTALL &&
+           op->kind != FLATPAK_TRANSACTION_OPERATION_UPDATE) ||
+          op->bundle != NULL || op->resolved_image_source != NULL)
+        continue;
+
+      state = flatpak_transaction_ensure_remote_state (self, op->kind, op->remote,
+                                                       NULL, &local_error);
+      if (state == NULL || state->is_oci)
+        goto skip;
+
+      commit = flatpak_remote_state_load_ref_commit (state, priv->dir,
+                                                     flatpak_decomposed_get_ref (op->ref),
+                                                     op->resolved_commit,
+                                                     op->resolved_token,
+                                                     NULL, cancellable, &local_error);
+      if (commit == NULL)
+        goto skip;
+
+      sources = flatpak_commit_get_extra_data_sources (commit, &local_error);
+      if (sources == NULL)
+        goto skip;
+
+      flatpak_extra_data_prefetcher_add (prefetcher, op, sources);
+      continue;
+
+skip:
+      if (local_error != NULL)
+        g_debug ("Skipping extra-data prefetch for %s: %s",
+                 flatpak_decomposed_get_ref (op->ref), local_error->message);
+    }
+
+  flatpak_extra_data_prefetcher_start (prefetcher);
+}
+
 static gboolean
 flatpak_transaction_real_run (FlatpakTransaction *self,
                               GCancellable       *cancellable,
@@ -5448,6 +5502,7 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
   gboolean needs_triggers = FALSE;
   gboolean needs_cache_drop = FALSE;
   gboolean ready_res = FALSE;
+  g_autoptr(FlatpakExtraDataPrefetcher) prefetcher = NULL;
   int i;
 
   if (!priv->can_run)
@@ -5579,6 +5634,10 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
   if (!ready_res)
     return flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted by user"));
 
+  prefetcher = flatpak_extra_data_prefetcher_new (priv->dir);
+  prepare_extra_data_prefetch (self, prefetcher, cancellable);
+  flatpak_dir_set_extra_data_prefetcher (priv->dir, prefetcher);
+
   for (l = priv->ops; l != NULL; l = l->next)
     {
       FlatpakTransactionOperation *op = l->data;
@@ -5620,6 +5679,8 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
       if (res)
         {
           g_autoptr(GBytes) deploy_data = NULL;
+
+          flatpak_extra_data_prefetcher_operation_done (prefetcher, op);
           /* deploy v4 guarantees eol/eolr info */
           deploy_data = flatpak_dir_get_deploy_data (priv->dir, op->ref, 4, NULL, NULL);
 
@@ -5663,6 +5724,9 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
         }
     }
   priv->current_op = NULL;
+
+  flatpak_dir_set_extra_data_prefetcher (priv->dir, NULL);
+  g_clear_pointer (&prefetcher, flatpak_extra_data_prefetcher_unref);
 
   if (needs_triggers)
     flatpak_dir_run_triggers (priv->dir, cancellable, NULL);

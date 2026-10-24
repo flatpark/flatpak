@@ -41,6 +41,7 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC (AutoPolkitSubject, g_object_unref)
 
 #include "flatpak-builtins.h"
 #include "flatpak-builtins-utils.h"
+#include "flatpak-extra-data-prefetch-private.h"
 #include "flatpak-utils-private.h"
 
 static int opt_verbose;
@@ -926,6 +927,7 @@ complete (int    argc,
 static void
 handle_sigterm (int signum)
 {
+  flatpak_extra_data_prefetch_cleanup_on_signal ();
   flatpak_disable_raw_mode ();
   flatpak_show_cursor ();
   _exit (1);

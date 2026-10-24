@@ -51,6 +51,7 @@
 #include "flatpak-dir-private.h"
 #include "flatpak-dir-utils-private.h"
 #include "flatpak-error.h"
+#include "flatpak-extra-data-prefetch-private.h"
 #include "flatpak-locale-utils-private.h"
 #include "flatpak-image-collection-private.h"
 #include "flatpak-image-source-private.h"
@@ -265,6 +266,7 @@ struct FlatpakDir
   GRegex          *pinned;
 
   FlatpakHttpSession *http_session;
+  FlatpakExtraDataPrefetcher *extra_data_prefetcher;
 };
 
 G_LOCK_DEFINE_STATIC (config_cache);
@@ -5211,6 +5213,13 @@ _flatpak_dir_reload_config (FlatpakDir   *self,
   return TRUE;
 }
 
+void
+flatpak_dir_set_extra_data_prefetcher (FlatpakDir                  *self,
+                                       FlatpakExtraDataPrefetcher *prefetcher)
+{
+  self->extra_data_prefetcher = prefetcher;
+}
+
 char *
 flatpak_dir_get_config (FlatpakDir *self,
                         const char *key,
@@ -6641,6 +6650,10 @@ flatpak_dir_pull_extra_data_to_bytes (FlatpakDir       *self,
     }
 
   expected_sha256 = ostree_checksum_from_bytes (expected_sha256_bytes);
+
+  if (self->extra_data_prefetcher != NULL)
+    flatpak_extra_data_prefetcher_wait (self->extra_data_prefetcher,
+                                        expected_sha256, progress, cancellable);
 
   if (name == NULL || *name == '\0' ||
       strcmp (name, ".") == 0 ||
