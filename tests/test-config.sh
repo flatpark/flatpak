@@ -27,6 +27,7 @@ export LC_ALL=C
 ${FLATPAK} config --list > list_out
 assert_file_has_content list_out "^languages:"
 assert_file_has_content list_out "^extra-data-parallel: [*]unset[*] [(]default: 4[)]"
+assert_file_has_content list_out "^keep-extra-data: [*]unset[*] [(]default: false[)]"
 
 ok "config list"
 

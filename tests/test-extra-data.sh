@@ -60,9 +60,23 @@ ${FLATPAK} run --command=sh org.test.Hello -c "cat /app/extra/test" > out
 assert_file_has_content out "extra-data-test-content"
 assert_not_has_file "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}/${EXTRA_DATA_NAME}"
 
+EXTRA_DATA_COMMIT=$(${FLATPAK} ${U} info --show-commit org.test.Hello)
+ostree --repo="${FL_DIR}/repo" show --list-detached-metadata-keys "${EXTRA_DATA_COMMIT}" > detached-keys
+assert_not_file_has_content detached-keys "^xa.extra-data$"
+assert_file_has_content detached-keys "^ostree.gpgsigs$"
+
 ${FLATPAK} ${U} uninstall -y org.test.Hello >&2
 
 ok "install extra data app with ostree"
+
+${FLATPAK} ${U} config --set keep-extra-data true
+${FLATPAK} ${U} install -y ${REPONAME}-repo org.test.Hello ${BRANCH} >&2
+ostree --repo="${FL_DIR}/repo" show --list-detached-metadata-keys "${EXTRA_DATA_COMMIT}" > detached-keys
+assert_file_has_content detached-keys "^xa.extra-data$"
+assert_file_has_content detached-keys "^ostree.gpgsigs$"
+${FLATPAK} ${U} uninstall -y org.test.Hello >&2
+${FLATPAK} ${U} config --unset keep-extra-data
+ok "keep extra data in detached metadata when configured"
 
 # A complete file left by an interrupted prefetch is reused and reclaimed.
 mkdir -p "${USERDIR}/extra-data/${EXTRA_DATA_SHA256}"

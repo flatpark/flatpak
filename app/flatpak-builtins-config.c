@@ -259,6 +259,12 @@ get_report_os_info_default (FlatpakDir *dir)
 }
 
 static char *
+get_keep_extra_data_default (FlatpakDir *dir)
+{
+  return g_strdup ("false");
+}
+
+static char *
 get_extra_data_parallel_default (FlatpakDir *dir)
 {
   return g_strdup ("4");
@@ -276,6 +282,7 @@ ConfigKey keys[] = {
   { "languages", parse_lang, print_lang, get_lang_default },
   { "extra-languages", parse_locale, print_locale, NULL },
   { "report-os-info", parse_boolean, print_boolean, get_report_os_info_default },
+  { "keep-extra-data", parse_boolean, print_boolean, get_keep_extra_data_default },
   { "extra-data-parallel", parse_non_negative_integer, print_value, get_extra_data_parallel_default },
 };
 

@@ -51,6 +51,7 @@
 #include "flatpak-dir-private.h"
 #include "flatpak-dir-utils-private.h"
 #include "flatpak-error.h"
+#include "flatpak-extra-data-private.h"
 #include "flatpak-extra-data-prefetch-private.h"
 #include "flatpak-locale-utils-private.h"
 #include "flatpak-image-collection-private.h"
@@ -10522,6 +10523,20 @@ flatpak_dir_deploy (FlatpakDir          *self,
 
   if (!flatpak_dir_update_deploy_ref (self, flatpak_decomposed_get_ref (ref), checksum, error))
     return FALSE;
+
+  {
+    g_autofree char *keep_extra_data = flatpak_dir_get_config (self, "keep-extra-data", NULL);
+
+    if (g_strcmp0 (keep_extra_data, "true") != 0)
+      {
+        g_autoptr(GError) local_error = NULL;
+
+        if (!flatpak_repo_remove_extra_data (self->repo, checksum, NULL, NULL,
+                                             cancellable, &local_error))
+          g_warning ("Unable to remove extra data from commit %s: %s",
+                     checksum, local_error->message);
+      }
+  }
 
   return TRUE;
 }
